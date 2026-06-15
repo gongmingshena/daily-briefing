@@ -1,0 +1,52 @@
+﻿# ============================================================
+# .gitignore — Daily Briefing workspace
+# ============================================================
+
+# Secrets & credentials
+.opencode/secrets/
+.opencode/memory/session-*.md
+.opencode/memory/会话记录-*.md
+.sci-bot-session.json
+.wenxy-credentials.json
+.wenxy-session.json
+
+# Runtime output
+scripts/output/
+temp/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Personal documents (PII)
+*_extracted.txt
+*方案对比*.html
+*产品建议书*.txt
+*生活优惠日报*.md
+
+# Temp images
+cat_test.png
+cover_temp.png
+
+# Output
+output/
+scripts/output/
+wechat-publish/images/
+
+# Installed tools (Python venvs, etc)
+install/
+
+# System
+*.log
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
