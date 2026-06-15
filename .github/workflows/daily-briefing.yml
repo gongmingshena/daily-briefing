@@ -21,6 +21,9 @@ on:
 jobs:
   daily-briefing:
     runs-on: ubuntu-latest
+    # GITHUB_TOKEN 需要写权限才能 commit 回仓库存档
+    permissions:
+      contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -48,6 +51,14 @@ jobs:
           # HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
         run: |
           python scripts/daily-briefing.py
+
+      - name: Commit briefing to repository
+        run: |
+          git config user.name "Daily Briefing Bot"
+          git config user.email "bot@daily-briefing.gh"
+          git add briefings/
+          git diff --cached --quiet || git commit -m "daily briefing $(date +'%Y-%m-%d')"
+          git push
 
       - name: Upload output (on failure)
         if: failure()

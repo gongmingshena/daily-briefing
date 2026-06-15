@@ -33,6 +33,7 @@ import sys
 import re
 import json
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -76,6 +77,14 @@ OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "output", "每日简报"
 ))
+
+# ---- 存档目录（仓库根目录下的 briefings/） ----
+SCRIPT_DIR = Path(os.path.abspath(__file__)).parent
+REPO_ROOT = SCRIPT_DIR.parent
+BRIEFING_ARCHIVE_DIR = os.environ.get(
+    "BRIEFING_ARCHIVE_DIR",
+    str(REPO_ROOT / "briefings")
+)
 
 # ---- 简报版本 ----
 BRIEFING_VERSION = "v2-modelscope"
@@ -399,11 +408,18 @@ def save_and_push(content: str) -> str:
         f.write(full_content)
     log(f"💾 简报已保存: {filepath}")
 
+    # 存档到仓库（简版文件名 YYYY-MM-DD.md）
+    os.makedirs(BRIEFING_ARCHIVE_DIR, exist_ok=True)
+    archive_path = os.path.join(BRIEFING_ARCHIVE_DIR, f"{today}.md")
+    with open(archive_path, "w", encoding="utf-8") as f:
+        f.write(full_content)
+    log(f"📚 简报已存档: {archive_path}")
+
     # 推送（截断到 30KB 以内）
     title = f"📰 每日简报 {today}"
     push_content = full_content
     if len(push_content.encode("utf-8")) > 30000:
-        push_content = push_content[:10000] + "\n\n...（内容过长已截断，完整版见云实例）"
+        push_content = push_content[:10000] + "\n\n...（内容过长已截断，完整版见仓库 briefings/）"
     push_serverchan(title, push_content)
 
     return filepath

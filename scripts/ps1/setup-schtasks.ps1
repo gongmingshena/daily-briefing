@@ -5,11 +5,12 @@
 #>
 
 $TaskName     = "DailyBriefing"
-$TaskDesc     = "Daily 9:20 auto generate and push info briefing"
-$TaskTime     = "09:20"
+$TaskDesc     = "Daily 9:25 hot backup — runs if GitHub Actions failed at 9:20"
+$TaskTime     = "09:25"
+$HotBackupScript = "powershell.exe -ExecutionPolicy Bypass -File E:\openworkspace1\scripts\ps1\hot-backup.ps1"
 $ScriptPath   = "E:\openworkspace1\scripts\daily-briefing.py"
 $PythonExe    = "python"
-$OutputDir    = "E:\openworkspace1\scripts\output\DailyBriefing"
+$OutputDir    = "E:\openworkspace1\scripts\output\每日简报"
 $LogFile      = "E:\openworkspace1\scripts\output\schtasks-log.txt"
 $SecretFile   = "E:\openworkspace1\.opencode\secrets\modelscope-token.txt"
 $ServerChanKey = "SCT352036ToJIzPCe6DmfvV0oIbAMIYiZw"
@@ -38,17 +39,17 @@ if ($existing) {
     schtasks /Delete /TN $TaskName /F
 }
 
-$Command = "cmd /c set PYTHONIOENCODING=utf-8 && set MODELSCOPE_TOKEN=$(Get-Content $SecretFile -Raw) && set SERVERCHAN_KEY=$ServerChanKey && set OUTPUT_DIR=$OutputDir && $PythonExe $ScriptPath >> $LogFile 2>&1"
+$Command = "cmd /c powershell.exe -ExecutionPolicy Bypass -File E:\openworkspace1\scripts\ps1\hot-backup.ps1"
 
-Write-Host "Creating scheduled task: $TaskName (daily at $TaskTime)" -ForegroundColor Cyan
+Write-Host "Creating scheduled task: $TaskName (daily at $TaskTime, hot backup)" -ForegroundColor Cyan
 
 schtasks /Create /TN $TaskName /TR $Command /SC DAILY /ST $TaskTime /F
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "SUCCESS: Task created" -ForegroundColor Green
     Write-Host "  Name: $TaskName"
-    Write-Host "  Time: Daily $TaskTime"
-    Write-Host "  Script: $ScriptPath"
+    Write-Host "  Time: Daily $TaskTime (5 min after GitHub Actions)"
+    Write-Host "  Hot backup script: $HotBackupScript"
     Write-Host "  Log: $LogFile"
 } else {
     Write-Host "FAILED: Task creation error (code: $LASTEXITCODE)" -ForegroundColor Red
