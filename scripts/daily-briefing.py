@@ -437,6 +437,13 @@ def main():
     log(f"📂 输出目录: {OUTPUT_DIR}")
     log("=" * 50)
 
+    # 防重复检测：如果今天简报已在仓库存档，跳过执行
+    today_str = datetime.now(TZ).strftime("%Y-%m-%d")
+    archive_check_path = os.path.join(BRIEFING_ARCHIVE_DIR, f"{today_str}.md")
+    if os.path.exists(archive_check_path):
+        log(f"⏭️  简报已存在（{archive_check_path}），跳过执行——另一系统已生成")
+        return 0
+
     # 采集新闻
     news_data = collect_news()
 
