@@ -14,8 +14,8 @@ name: Daily Briefing
 
 on:
   schedule:
-    # 北京时间 7:40 = UTC 23:40 (前一日)
-    - cron: '40 23 * * *'
+    # 北京时间 2:00 = UTC 18:00 (前一日)
+    - cron: '0 18 * * *'
   workflow_dispatch:  # 可手动触发
 
 jobs:

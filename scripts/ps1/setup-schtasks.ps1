@@ -5,7 +5,7 @@
 #>
 
 $TaskName     = "DailyBriefing"
-$TaskDesc     = "Daily 7:45 hot backup — runs if GitHub Actions failed at 7:40"
+$TaskDesc     = "Daily 7:45 hot backup — runs if GitHub Actions (2:00 AM) failed"
 $TaskTime     = "07:45"
 $HotBackupScript = "powershell.exe -ExecutionPolicy Bypass -File E:\openworkspace1\scripts\ps1\hot-backup.ps1"
 $ScriptPath   = "E:\openworkspace1\scripts\daily-briefing.py"
@@ -48,7 +48,7 @@ schtasks /Create /TN $TaskName /TR $Command /SC DAILY /ST $TaskTime /F
 if ($LASTEXITCODE -eq 0) {
     Write-Host "SUCCESS: Task created" -ForegroundColor Green
     Write-Host "  Name: $TaskName"
-    Write-Host "  Time: Daily $TaskTime (5 min after GitHub Actions at 7:40)"
+    Write-Host "  Time: Daily $TaskTime (backup for GitHub Actions at 2:00 AM)"
     Write-Host "  Hot backup script: $HotBackupScript"
     Write-Host "  Log: $LogFile"
 } else {
