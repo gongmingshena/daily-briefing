@@ -103,7 +103,7 @@ RSS_FEEDS = {
         {"name": "BBC Tech", "url": "https://feeds.bbci.co.uk/news/technology/rss.xml"},
     ],
     "china_news": [
-        {"name": "China Daily", "url": "https://www.chinadaily.com.cn/rss/world_rss.xml"},
+        {"name": "BBC中文", "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"},
     ],
     "tech": [
         {"name": "TechCrunch", "url": "https://techcrunch.com/feed/"},
