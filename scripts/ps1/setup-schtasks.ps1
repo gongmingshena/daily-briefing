@@ -1,12 +1,12 @@
 ﻿<#
 .SYNOPSIS
   Set daily briefing Windows scheduled task
-  Runs daily-briefing.py at 9:20 AM daily, pushes via ServerChan
+  Runs daily-briefing.py at 8:30 AM daily, pushes via ServerChan
 #>
 
 $TaskName     = "DailyBriefing"
-$TaskDesc     = "Daily 7:45 primary runner — generates + pushes briefing. GitHub at 2:00 AM archives only"
-$TaskTime     = "07:45"
+$TaskDesc     = "Daily 8:30 primary runner — generates + pushes briefing. GitHub at 2:00 AM archives only"
+$TaskTime     = "08:30"
 $HotBackupScript = "powershell.exe -ExecutionPolicy Bypass -File E:\openworkspace1\scripts\ps1\hot-backup.ps1"
 $ScriptPath   = "E:\openworkspace1\scripts\daily-briefing.py"
 $PythonExe    = "python"
@@ -48,7 +48,7 @@ schtasks /Create /TN $TaskName /TR $Command /SC DAILY /ST $TaskTime /F
 if ($LASTEXITCODE -eq 0) {
     Write-Host "SUCCESS: Task created" -ForegroundColor Green
     Write-Host "  Name: $TaskName"
-    Write-Host "  Time: Daily $TaskTime (primary, GitHub at 2:00 AM archives only)"
+    Write-Host "  Time: Daily $TaskTime (China briefing, GitHub at 2:00 AM global briefing)"
     Write-Host "  Hot backup script: $HotBackupScript"
     Write-Host "  Log: $LogFile"
 } else {
