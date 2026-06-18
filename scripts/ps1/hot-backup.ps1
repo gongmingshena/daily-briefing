@@ -39,9 +39,9 @@ if (-not $TokenContent) {
 $env:PYTHONIOENCODING = "utf-8"
 $env:MODELSCOPE_TOKEN = $TokenContent.Trim()
 $env:SERVERCHAN_KEY = $ServerChanKey
-# 不设 SKIP_PUSH → 本地负责推送
+$env:BRIEFING_MODE = "china"
 
-Write-Log "Running daily-briefing.py (with push)..."
+Write-Log "Running daily-briefing.py (BRIEFING_MODE=china)..."
 $result = & python $ScriptPath 2>&1 | Out-String
 Write-Log "Output: $($result.Trim())"
 

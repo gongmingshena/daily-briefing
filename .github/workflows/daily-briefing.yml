@@ -41,12 +41,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
-      - name: Run daily briefing (archive only, no push)
+      - name: Run global briefing (push to WeChat)
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           PYTHONIOENCODING: utf-8
-          SKIP_PUSH: true
+          BRIEFING_MODE: global
         run: |
           python scripts/daily-briefing.py
 
@@ -55,7 +55,7 @@ jobs:
           git config user.name "Daily Briefing Bot"
           git config user.email "bot@daily-briefing.gh"
           git add briefings/
-          git diff --cached --quiet || git commit -m "daily briefing $(date +'%Y-%m-%d')"
+          git diff --cached --quiet || git commit -m "global briefing $(date +'%Y-%m-%d')"
           git push
 
       - name: Upload output (on failure)

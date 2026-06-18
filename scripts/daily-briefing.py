@@ -87,10 +87,13 @@ BRIEFING_ARCHIVE_DIR = os.environ.get(
 )
 
 # ---- 简报版本 ----
-BRIEFING_VERSION = "v3-multi-source"
+BRIEFING_VERSION = "v3-dual-mode"
 
-# ---- 是否跳过推送（GitHub Actions 用） ----
-SKIP_PUSH = os.environ.get("SKIP_PUSH", "").lower() in ("1", "true", "yes")
+# ---- 运行模式 ----
+# global → 全球简报（world + finance + tech）
+# china → 中国简报（china + browser domestic news）
+# 空/其他 → 全部源（手动测试用）
+BRIEFING_MODE = os.environ.get("BRIEFING_MODE", "").lower()
 
 # ---- 时区 ----
 TZ = timezone(timedelta(hours=8))  # 北京时间
@@ -120,6 +123,12 @@ RSS_FEEDS = {
         {"name": "BBC中文", "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"},
         {"name": "36Kr", "url": "https://36kr.com/feed"},
     ],
+}
+
+# ---- 根据运行模式筛选源 ----
+MODE_SECTIONS = {
+    "global": ["world", "finance", "tech"],
+    "china": ["china"],
 }
 
 # ============================================================
@@ -306,11 +315,21 @@ def push_serverchan(title: str, content: str) -> bool:
 # ============================================================
 
 def collect_news() -> dict:
-    """从 RSS 源采集新闻"""
+    """从 RSS 源采集新闻（根据 BRIEFING_MODE 筛选分类）"""
     log("📡 开始采集新闻...")
-    all_news = {}
 
-    for category, feeds in RSS_FEEDS.items():
+    # 根据模式筛选分类
+    if BRIEFING_MODE in MODE_SECTIONS:
+        enabled = MODE_SECTIONS[BRIEFING_MODE]
+        feeds_to_fetch = {k: v for k, v in RSS_FEEDS.items() if k in enabled}
+        mode_label = {"global": "🌍 全球简报", "china": "🇨🇳 中国简报"}.get(BRIEFING_MODE, "")
+        if mode_label:
+            log(f"📋 模式: {mode_label}")
+    else:
+        feeds_to_fetch = RSS_FEEDS
+
+    all_news = {}
+    for category, feeds in feeds_to_fetch.items():
         category_news = []
         for feed in feeds:
             entries = fetch_rss(feed["url"])
@@ -340,12 +359,17 @@ def generate_briefing(news_data: dict) -> Optional[str]:
     log("🧠 正在用 AI 生成简报...")
 
     sections_text = []
-    section_labels = {
+    all_labels = {
         "world": "🌍 全球要闻",
         "finance": "💰 财经",
         "tech": "💻 科技",
         "china": "🇨🇳 中国",
     }
+    # 只输出当前模式包含的分类
+    if BRIEFING_MODE in MODE_SECTIONS:
+        section_labels = {k: v for k, v in all_labels.items() if k in MODE_SECTIONS[BRIEFING_MODE]}
+    else:
+        section_labels = all_labels
 
     total_items = 0
     for cat, label in section_labels.items():
@@ -376,17 +400,32 @@ def generate_briefing(news_data: dict) -> Optional[str]:
 
 输出格式：纯 Markdown，不需要额外解释。"""
 
-    user_prompt = f"""请根据以下来自不同平台的新闻素材，整理一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的每日信息简报。
+    if BRIEFING_MODE == "global":
+        prompt_structure = """1. 全球要闻（各平台头版观点，4-6条）
+2. 财经（来自不同财经媒体，3-5条）
+3. 科技（2-3条）
+4. 简要评述（200字以内，综合全球趋势）"""
+        briefing_type = "全球简报"
+    elif BRIEFING_MODE == "china":
+        prompt_structure = """1. 中国时事（来自各中文源，2-4条）
+2. 民生与社会（2-3条）
+3. 简要评述（200字以内，关注国内趋势）"""
+        briefing_type = "中国简报"
+    else:
+        prompt_structure = """1. 全球要闻（各平台头版观点，4-6条）
+2. 财经（来自不同财经媒体，3-5条）
+3. 科技（2-3条）
+4. 中国（2-3条）
+5. 简要评述（200字以内，综合各平台趋势）"""
+        briefing_type = "每日简报"
+
+    user_prompt = f"""请根据以下来自不同平台的新闻素材，整理一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的{briefing_type}。
 
 素材（每个平台只取头版头条，视角各不相同）：
 {raw_material}
 
 请按以下结构输出：
-1. 全球要闻（各平台头版观点，4-6条）
-2. 财经（来自不同财经媒体，3-5条）
-3. 科技（2-3条）
-4. 中国（2-3条）
-5. 简要评述（200字以内，综合各平台趋势）
+{prompt_structure}
 
 每条新闻请附上来源名称和链接。"""
 
@@ -395,11 +434,12 @@ def generate_briefing(news_data: dict) -> Optional[str]:
 
 
 def save_and_push(content: str) -> str:
-    """保存简报并推送"""
+    """保存简报并推送（根据 BRIEFING_MODE 区分文件名和标题）"""
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][datetime.now(TZ).weekday()]
 
-    header = f"""# 每日简报 — {today}（{weekday_cn}）
+    mode_tag = {"global": "🌍 全球简报", "china": "🇨🇳 中国简报"}.get(BRIEFING_MODE, "📰 每日简报")
+    header = f"""# {mode_tag} — {today}（{weekday_cn}）
 
 > 生成时间: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')} | 模型: {MODELSCOPE_MODEL}
 
@@ -407,30 +447,29 @@ def save_and_push(content: str) -> str:
 """
     full_content = header + "\n" + content + f"\n\n---\n\n*由 Daily Briefing {BRIEFING_VERSION} 自动生成*"
 
+    # 本地输出
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    filename = f"每日简报_{today}.md"
+    mode_suffix = {"global": "全球简报", "china": "中国简报"}.get(BRIEFING_MODE, "每日简报")
+    filename = f"{mode_suffix}_{today}.md"
     filepath = os.path.join(OUTPUT_DIR, filename)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(full_content)
     log(f"💾 简报已保存: {filepath}")
 
-    # 存档到仓库（简版文件名 YYYY-MM-DD.md）
+    # 存档到仓库（按模式区分文件名）
     os.makedirs(BRIEFING_ARCHIVE_DIR, exist_ok=True)
-    archive_path = os.path.join(BRIEFING_ARCHIVE_DIR, f"{today}.md")
+    archive_suffix = f"-{BRIEFING_MODE}" if BRIEFING_MODE in ("global", "china") else ""
+    archive_path = os.path.join(BRIEFING_ARCHIVE_DIR, f"{today}{archive_suffix}.md")
     with open(archive_path, "w", encoding="utf-8") as f:
         f.write(full_content)
     log(f"📚 简报已存档: {archive_path}")
 
-    # 推送（GitHub Actions 模式跳过推送）
-    if SKIP_PUSH:
-        log("⏭️  SKIP_PUSH=true，跳过 Server酱 推送（GitHub Actions 存档模式）")
-    else:
-        # 截断到 30KB 以内
-        title = f"📰 每日简报 {today}"
-        push_content = full_content
-        if len(push_content.encode("utf-8")) > 30000:
-            push_content = push_content[:10000] + "\n\n...（内容过长已截断，完整版见仓库 briefings/）"
-        push_serverchan(title, push_content)
+    # 推送
+    title = f"{mode_tag} {today}"
+    push_content = full_content
+    if len(push_content.encode("utf-8")) > 30000:
+        push_content = push_content[:10000] + f"\n\n...（内容过长已截断，完整版见仓库 briefings/）"
+    push_serverchan(title, push_content)
 
     return filepath
 
@@ -443,17 +482,11 @@ def main():
     log("=" * 50)
     log(f"📰 Daily Briefing — {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')}")
     log(f"🤖 模型: {MODELSCOPE_MODEL}")
+    mode_label = {"global": "🌍 全球模式", "china": "🇨🇳 中国模式"}.get(BRIEFING_MODE, "📋 全源模式")
+    log(f"📌 模式: {mode_label}")
     log(f"📤 Server酱: {'✅ 已配置' if SERVERCHAN_KEY else '⚠️  未配置'}")
     log(f"📂 输出目录: {OUTPUT_DIR}")
     log("=" * 50)
-
-    # 防重复检测（仅 GitHub 存档模式生效）
-    # GitHub 只存档不推送，如果简报已存在说明本地已生成，跳过
-    today_str = datetime.now(TZ).strftime("%Y-%m-%d")
-    archive_check_path = os.path.join(BRIEFING_ARCHIVE_DIR, f"{today_str}.md")
-    if SKIP_PUSH and os.path.exists(archive_check_path):
-        log(f"⏭️  GitHub 存档模式：简报已存在，跳过")
-        return 0
 
     # 采集新闻
     news_data = collect_news()
@@ -463,16 +496,30 @@ def main():
     if not content:
         log("❌ 简报生成失败，尝试无素材直接生成...")
         # 即使没 RSS 素材，也让 AI 基于知识生成
-        fallback_prompt = f"""请基于你的知识，生成一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的每日信息简报。
-今天没有采集到最新新闻素材，请用已有知识输出。
-
-结构：
-1. 全球财经头条（3-5条）
+        if BRIEFING_MODE == "global":
+            fb_type = "全球简报"
+            fb_structure = """1. 全球要闻（4-6条）
+2. 财经（3-5条）
+3. 科技（2-3条）
+4. 简要评述"""
+        elif BRIEFING_MODE == "china":
+            fb_type = "中国简报"
+            fb_structure = """1. 中国时事（2-4条）
+2. 民生与社会（2-3条）
+3. 简要评述"""
+        else:
+            fb_type = "每日简报"
+            fb_structure = """1. 全球财经头条（3-5条）
 2. 中国时事动态（3-5条）
 3. 财经与商业（3-5条）
 4. 科技与AI（3-5条）
 5. 健康与民生（2-3条）
-6. 简要评述（200字以内）
+6. 简要评述"""
+        fallback_prompt = f"""请基于你的知识，生成一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的{fb_type}。
+今天没有采集到最新新闻素材，请用已有知识输出。
+
+结构：
+{fb_structure}
 
 注意：标注每条信息的可靠性，不确定的加上"据公开报道"等。"""
         content = call_llm(fallback_prompt)
