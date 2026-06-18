@@ -41,14 +41,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
-      - name: Run daily briefing
+      - name: Run daily briefing (archive only, no push)
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           PYTHONIOENCODING: utf-8
-          # 国内服务器可能需要代理
-          # HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
-          # HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
+          SKIP_PUSH: true
         run: |
           python scripts/daily-briefing.py
 

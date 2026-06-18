@@ -87,7 +87,10 @@ BRIEFING_ARCHIVE_DIR = os.environ.get(
 )
 
 # ---- 简报版本 ----
-BRIEFING_VERSION = "v2-modelscope"
+BRIEFING_VERSION = "v3-multi-source"
+
+# ---- 是否跳过推送（GitHub Actions 用） ----
+SKIP_PUSH = os.environ.get("SKIP_PUSH", "").lower() in ("1", "true", "yes")
 
 # ---- 时区 ----
 TZ = timezone(timedelta(hours=8))  # 北京时间
@@ -97,20 +100,24 @@ TZ = timezone(timedelta(hours=8))  # 北京时间
 # ============================================================
 
 RSS_FEEDS = {
-    "global_finance": [
-        {"name": "BBC World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml"},
-        {"name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
-        {"name": "BBC Tech", "url": "https://feeds.bbci.co.uk/news/technology/rss.xml"},
+    "world": [
+        {"name": "BBC", "url": "https://feeds.bbci.co.uk/news/world/rss.xml"},
+        {"name": "Guardian", "url": "https://www.theguardian.com/world/rss"},
+        {"name": "France 24", "url": "https://www.france24.com/en/rss"},
+        {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml"},
     ],
-    "china_news": [
-        {"name": "BBC中文", "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"},
+    "finance": [
+        {"name": "CNBC", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html"},
+        {"name": "MarketWatch", "url": "https://feeds.marketwatch.com/marketwatch/topstories"},
+        {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex"},
+        {"name": "FT", "url": "https://www.ft.com/rss/world"},
     ],
     "tech": [
         {"name": "TechCrunch", "url": "https://techcrunch.com/feed/"},
-        {"name": "HN Frontpage", "url": "https://hnrss.org/frontpage?count=15"},
-        {"name": "arXiv AI", "url": "http://export.arxiv.org/rss/cs.AI"},
+        {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index"},
     ],
-    "china_tech": [
+    "china": [
+        {"name": "BBC中文", "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"},
         {"name": "36Kr", "url": "https://36kr.com/feed"},
     ],
 }
@@ -181,7 +188,8 @@ def fetch_rss(url: str, timeout: int = 15) -> Optional[list]:
                     "summary": re.sub(r"<[^>]+>", "", summary).strip()[:300],
                 })
 
-        return entries[:10]
+        # 每源只取头版头条
+        return entries[:1]
 
     except Exception as e:
         log(f"⚠️  RSS 获取失败 {url[:50]}: {e}")
@@ -333,10 +341,10 @@ def generate_briefing(news_data: dict) -> Optional[str]:
 
     sections_text = []
     section_labels = {
-        "global_finance": "🌍 全球财经与国际时事",
-        "china_news": "🇨🇳 中国时事动态",
-        "tech": "🤖 科技与 AI",
-        "china_tech": "💻 国内科技产业",
+        "world": "🌍 全球要闻",
+        "finance": "💰 财经",
+        "tech": "💻 科技",
+        "china": "🇨🇳 中国",
     }
 
     total_items = 0
@@ -344,13 +352,13 @@ def generate_briefing(news_data: dict) -> Optional[str]:
         items = news_data.get(cat, [])
         if items:
             section = f"## {label}\n\n"
-            for i, item in enumerate(items[:8], 1):
+            for i, item in enumerate(items, 1):
                 section += f"{i}. **{item['title']}**\n"
                 if item.get("summary"):
                     section += f"   {item['summary'][:200]}\n"
                 section += f"   [{item.get('source','')}]({item['link']})\n\n"
             sections_text.append(section)
-            total_items += len(items[:8])
+            total_items += len(items)
 
     if total_items == 0:
         log("⚠️  没有采集到任何新闻")
@@ -358,31 +366,29 @@ def generate_briefing(news_data: dict) -> Optional[str]:
 
     raw_material = "\n".join(sections_text)
 
-    system_prompt = """你是一个专业的财经新闻编辑，负责将原始新闻素材整理成结构清晰的每日简报。
+    system_prompt = """你是一个专业的新闻编辑，负责将来自不同平台的新闻素材整理成每日简报。
 
 要求：
-1. 从中精选最重要的新闻，每条写 1-2 句简评
-2. 语言通俗易懂，适合 35-50 岁普通读者
+1. 每条新闻写 1-2 句简评，说明为什么重要
+2. 语言通俗易懂，适合普通读者
 3. 保持客观，不夸大
-4. 每个分类保留 3-5 条最重要内容
-5. 如果素材不足，可以根据你的知识补充相关背景（但不要编造新闻）
+4. 如果素材不足，可以根据你的知识补充相关背景（但不要编造新闻）
 
 输出格式：纯 Markdown，不需要额外解释。"""
 
-    user_prompt = f"""请根据以下新闻素材，整理一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的每日信息简报。
+    user_prompt = f"""请根据以下来自不同平台的新闻素材，整理一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的每日信息简报。
 
-素材：
+素材（每个平台只取头版头条，视角各不相同）：
 {raw_material}
 
 请按以下结构输出：
-1. 全球财经头条（3-5条）
-2. 中国时事动态（3-5条）
-3. 财经与商业（3-5条）
-4. 科技与AI（3-5条）
-5. 健康与民生（2-3条）
-6. 简要评述（200字以内）
+1. 全球要闻（各平台头版观点，4-6条）
+2. 财经（来自不同财经媒体，3-5条）
+3. 科技（2-3条）
+4. 中国（2-3条）
+5. 简要评述（200字以内，综合各平台趋势）
 
-每条新闻请附上来源链接（如有）。"""
+每条新闻请附上来源名称和链接。"""
 
     content = call_llm(user_prompt, system_prompt)
     return content
@@ -415,12 +421,16 @@ def save_and_push(content: str) -> str:
         f.write(full_content)
     log(f"📚 简报已存档: {archive_path}")
 
-    # 推送（截断到 30KB 以内）
-    title = f"📰 每日简报 {today}"
-    push_content = full_content
-    if len(push_content.encode("utf-8")) > 30000:
-        push_content = push_content[:10000] + "\n\n...（内容过长已截断，完整版见仓库 briefings/）"
-    push_serverchan(title, push_content)
+    # 推送（GitHub Actions 模式跳过推送）
+    if SKIP_PUSH:
+        log("⏭️  SKIP_PUSH=true，跳过 Server酱 推送（GitHub Actions 存档模式）")
+    else:
+        # 截断到 30KB 以内
+        title = f"📰 每日简报 {today}"
+        push_content = full_content
+        if len(push_content.encode("utf-8")) > 30000:
+            push_content = push_content[:10000] + "\n\n...（内容过长已截断，完整版见仓库 briefings/）"
+        push_serverchan(title, push_content)
 
     return filepath
 
@@ -437,11 +447,12 @@ def main():
     log(f"📂 输出目录: {OUTPUT_DIR}")
     log("=" * 50)
 
-    # 防重复检测：如果今天简报已在仓库存档，跳过执行
+    # 防重复检测（仅 GitHub 存档模式生效）
+    # GitHub 只存档不推送，如果简报已存在说明本地已生成，跳过
     today_str = datetime.now(TZ).strftime("%Y-%m-%d")
     archive_check_path = os.path.join(BRIEFING_ARCHIVE_DIR, f"{today_str}.md")
-    if os.path.exists(archive_check_path):
-        log(f"⏭️  简报已存在（{archive_check_path}），跳过执行——另一系统已生成")
+    if SKIP_PUSH and os.path.exists(archive_check_path):
+        log(f"⏭️  GitHub 存档模式：简报已存在，跳过")
         return 0
 
     # 采集新闻
