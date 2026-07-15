@@ -1,7 +1,9 @@
 # ============================================================
-# 每日简报 — GitHub Actions 定时任务
-# 每天 9:20 (北京时间) 自动执行 daily-briefing.py
-# 通过 Server酱 推送到微信
+# 每日简报 + 77 内容总编 — GitHub Actions 定时任务
+# 每天 2:00 (北京时间) 自动执行：
+#   1. 中国简报 (daily-briefing.py)
+#   2. 77 内容总编·每日编辑部晨报 (77-content-editor.py)
+# 均通过 Server酱 推送到微信
 #
 # 设置方法：
 #   1. 在 GitHub 仓库 Settings → Secrets and variables → Actions 中
@@ -21,7 +23,6 @@ on:
 jobs:
   daily-briefing:
     runs-on: ubuntu-latest
-    # GITHUB_TOKEN 需要写权限才能 commit 回仓库存档
     permissions:
       contents: write
     env:
@@ -41,21 +42,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
-      - name: Run global briefing (push to WeChat)
+      - name: Step 1 — China briefing (push to WeChat)
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           PYTHONIOENCODING: utf-8
-          BRIEFING_MODE: global
+          BRIEFING_MODE: china
         run: |
           python scripts/daily-briefing.py
 
-      - name: Commit briefing to repository
+      - name: Step 2 — 77 content editor (push to WeChat)
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          PYTHONIOENCODING: utf-8
+        run: |
+          python scripts/77-content-editor.py --push
+
+      - name: Commit briefings to repository
         run: |
           git config user.name "Daily Briefing Bot"
           git config user.email "bot@daily-briefing.gh"
-          git add briefings/
-          git diff --cached --quiet || git commit -m "global briefing $(date +'%Y-%m-%d')"
+          git add briefings/ scripts/output/
+          git diff --cached --quiet || git commit -m "briefings $(date +'%Y-%m-%d')"
           git push
 
       - name: Upload output (on failure)

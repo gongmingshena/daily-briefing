@@ -58,4 +58,15 @@ if (Test-Path $BriefingFile) {
 }
 
 Pop-Location
+# Step 4: Token 健康检查 (简报生成后验证 token 有效性)
+Write-Log "Running token health check..."
+$healthResult = & python "$RepoRoot\scripts\check-token-health.py" 2>&1 | Out-String
+Write-Log "Health check: $($healthResult.Trim())"
+
+# Step 5: 77 内容总编 — 每日编辑部晨报（母题驱动 → ABC分级 → 总编意见）
+Write-Log "Running 77-content-editor.py (--push)..."
+$env:BRIEFING_MODE = ""  # 清除旧模式变量
+$editorResult = & python "$RepoRoot\scripts\77-content-editor.py" --push 2>&1 | Out-String
+Write-Log "77-editor: $($editorResult.Trim())"
+
 Write-Log "=== LocalRunner finished ==="
