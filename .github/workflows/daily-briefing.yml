@@ -1,9 +1,9 @@
 # ============================================================
 # 每日简报 + 77 内容总编 — GitHub Actions 定时任务
-# 每天 2:00 (北京时间) 自动执行：
+# 每天 2:00 (北京时间) 执行：
 #   1. 中国简报 (daily-briefing.py)
 #   2. 77 内容总编·每日编辑部晨报 (77-content-editor.py)
-# 均通过 Server酱 推送到微信
+# 合并为一条 Server酱 推送发送到微信
 #
 # 设置方法：
 #   1. 在 GitHub 仓库 Settings → Secrets and variables → Actions 中
@@ -18,7 +18,7 @@ on:
   schedule:
     # 北京时间 2:00 = UTC 18:00 (前一日)
     - cron: '0 18 * * *'
-  workflow_dispatch:  # 可手动触发
+  workflow_dispatch:
 
 jobs:
   daily-briefing:
@@ -42,23 +42,81 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml
 
-      - name: Step 1 — China briefing (push to WeChat)
+      # ---- 生成两份简报（均不推送） ----
+      - name: Step 1 — Generate China briefing (no push)
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           PYTHONIOENCODING: utf-8
           BRIEFING_MODE: china
+          # 不设 SERVERCHAN_KEY → daily-briefing.py 不推送
         run: |
           python scripts/daily-briefing.py
 
-      - name: Step 2 — 77 content editor (push to WeChat)
+      - name: Step 2 — Generate 77 editorial (no push)
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          PYTHONIOENCODING: utf-8
+          # --dry-run → 77-content-editor.py 不推送
+        run: |
+          python scripts/77-content-editor.py --dry-run
+
+      # ---- 合并为一条推送 ----
+      - name: Step 3 — Merge and push to WeChat
+        env:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
           PYTHONIOENCODING: utf-8
         run: |
-          python scripts/77-content-editor.py --push
+          python -c "
+import os, sys
+from datetime import datetime, timezone, timedelta
 
+TZ = timezone(timedelta(hours=8))
+today = datetime.now(TZ).strftime('%Y-%m-%d')
+key = os.environ.get('SERVERCHAN_KEY', '')
+
+if not key:
+    print('⚠️  SERVERCHAN_KEY 未配置，跳过推送')
+    sys.exit(0)
+
+# 读取中国简报
+china_path = f'scripts/output/每日简报/中国简报_{today}.md'
+if os.path.isfile(china_path):
+    with open(china_path, 'r', encoding='utf-8') as f:
+        china = f.read()
+else:
+    china = f'# 🇨🇳 中国简报 — {today}\n\n（今日未生成）'
+
+# 读取编辑部晨报
+editor_path = f'scripts/output/每日编辑部晨报/每日编辑部晨报_{today}.md'
+if os.path.isfile(editor_path):
+    with open(editor_path, 'r', encoding='utf-8') as f:
+        editor = f.read()
+else:
+    editor = f'# 📰 每日编辑部晨报 — {today}\n\n（今日未生成）'
+
+# 合并
+merged = china + '\n\n---\n\n' + editor
+
+# 截断（Server酱约 32KB 上限）
+if len(merged.encode('utf-8')) > 28000:
+    merged = merged[:10000] + '\n\n...（内容过长已截断）'
+
+# 推送
+title = f'📰 77晨报 + 🇨🇳 简报 | {today}'
+url = f'https://sctapi.ftqq.com/{key}.send'
+import requests
+try:
+    resp = requests.post(url, data={'title': title, 'desp': merged}, timeout=30)
+    result = resp.json()
+    if result.get('code') == 0:
+        print(f'✅ Server酱 推送成功: {title}')
+    else:
+        print(f'⚠️  推送失败: {result}')
+except Exception as e:
+    print(f'⚠️  推送异常: {e}')
+"
+
+      # ---- 提交存档到仓库 ----
       - name: Commit briefings to repository
         run: |
           git config user.name "Daily Briefing Bot"
