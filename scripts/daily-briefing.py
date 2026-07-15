@@ -67,10 +67,9 @@ if not MODELSCOPE_TOKEN:
     sys.exit(1)
 
 # ---- Server酱 ----
-SERVERCHAN_KEY = os.environ.get(
-    "SERVERCHAN_KEY",
-    "SCT352036ToJIzPCe6DmfvV0oIbAMIYiZw"
-)
+SERVERCHAN_KEY = os.environ.get("SERVERCHAN_KEY", "")
+if not SERVERCHAN_KEY:
+    print("ℹ️  未设置 SERVERCHAN_KEY，简报仅存档不推送")
 
 # ---- 输出目录 ----
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(
@@ -87,7 +86,7 @@ BRIEFING_ARCHIVE_DIR = os.environ.get(
 )
 
 # ---- 简报版本 ----
-BRIEFING_VERSION = "v3-dual-mode"
+BRIEFING_VERSION = "v4-hotsearch"
 
 # ---- 运行模式 ----
 # global → 全球简报（world + finance + tech）
@@ -122,6 +121,8 @@ RSS_FEEDS = {
     "china": [
         {"name": "BBC中文", "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"},
         {"name": "36Kr", "url": "https://36kr.com/feed"},
+        {"name": "新华网", "url": "http://www.xinhuanet.com/politics/news_politics.xml"},
+        {"name": "人民网", "url": "http://www.people.com.cn/rss/politics.xml"},
     ],
 }
 
@@ -197,11 +198,46 @@ def fetch_rss(url: str, timeout: int = 15) -> Optional[list]:
                     "summary": re.sub(r"<[^>]+>", "", summary).strip()[:300],
                 })
 
-        # 每源只取头版头条
-        return entries[:1]
+        # 每源取前3条
+        return entries[:3]
 
     except Exception as e:
         log(f"⚠️  RSS 获取失败 {url[:50]}: {e}")
+        return []
+
+
+def fetch_baidu_hotsearch(max_items: int = 20) -> list:
+    """采集百度实时热搜榜（top.baidu.com）"""
+    url = "https://top.baidu.com/board?tab=realtime"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        session = _get_session()
+        resp = session.get(url, headers=headers, timeout=15)
+        resp.encoding = "utf-8"
+        text = resp.text
+
+        words = re.findall(r'"word":"([^"]+)"', text)
+        scores = re.findall(r'"hotScore":"([^"]+)"', text)
+        # 去重
+        seen = set()
+        results = []
+        for i, w in enumerate(words):
+            if w not in seen:
+                seen.add(w)
+                score = int(scores[i]) if i < len(scores) and scores[i].isdigit() else 0
+                results.append({"title": w, "hotScore": score})
+            if len(results) >= max_items:
+                break
+        log(f"🔥 百度热搜采集完成: {len(results)} 条")
+        return results
+    except Exception as e:
+        log(f"⚠️  百度热搜采集失败: {e}")
         return []
 
 
@@ -284,7 +320,24 @@ def call_llm(prompt: str, system: str = "你是一个专业的财经新闻编辑
         log(f"⚠️  LLM API 调用失败: {e}")
         if hasattr(e, 'response') and e.response is not None:
             try:
-                log(f"   返回: {e.response.text[:500]}")
+                resp_body = e.response.text[:500]
+                log(f"   返回: {resp_body}")
+                # Token 过期检测 (401 Unauthorized)
+                if e.response.status_code == 401:
+                    alert_msg = (
+                        f"🚨 **ModelScope Token 过期告警**\n\n"
+                        f"时间: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')}\n\n"
+                        f"简报任务因 token 认证失败中断。\n\n"
+                        f"**修复方法:**\n"
+                        f"1. 打开 https://modelscope.cn/my/myaccesstoken\n"
+                        f"2. 生成新 SDK Token\n"
+                        f"3. 更新到: 本地 modelscope-token.txt + GitHub Secret\n\n"
+                        f"响应: {resp_body[:200]}"
+                    )
+                    try:
+                        push_serverchan("⚠️ ModelScope Token 过期，简报停推", alert_msg)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         return None
@@ -351,6 +404,12 @@ def collect_news() -> dict:
                 unique.append(item)
         all_news[category] = unique[:15]
 
+    # 采集百度热搜
+    if BRIEFING_MODE in ("china", "") or BRIEFING_MODE not in MODE_SECTIONS:
+        hotsearch = fetch_baidu_hotsearch(20)
+        if hotsearch:
+            all_news["hotsearch"] = hotsearch
+
     return all_news
 
 
@@ -372,6 +431,18 @@ def generate_briefing(news_data: dict) -> Optional[str]:
         section_labels = all_labels
 
     total_items = 0
+
+    # 先输出热搜（如果有）
+    hotsearch = news_data.get("hotsearch", [])
+    if hotsearch:
+        hs_section = "## 🔥 今日热搜 TOP10\n\n"
+        for i, item in enumerate(hotsearch[:10], 1):
+            score_display = f"(热度: {item['hotScore']:,})" if item.get("hotScore") else ""
+            hs_section += f"{i}. **{item['title']}** {score_display}\n"
+        hs_section += "\n"
+        sections_text.insert(0, hs_section)  # 热搜放最前面
+        total_items += len(hotsearch[:10])
+
     for cat, label in section_labels.items():
         items = news_data.get(cat, [])
         if items:
@@ -390,44 +461,50 @@ def generate_briefing(news_data: dict) -> Optional[str]:
 
     raw_material = "\n".join(sections_text)
 
-    system_prompt = """你是一个专业的新闻编辑，负责将来自不同平台的新闻素材整理成每日简报。
+    system_prompt = """你是一个专业的新闻编辑，负责整合热搜数据与权威媒体新闻，生成信息密度高的每日简报。
 
-要求：
-1. 每条新闻写 1-2 句简评，说明为什么重要
-2. 语言通俗易懂，适合普通读者
-3. 保持客观，不夸大
-4. 如果素材不足，可以根据你的知识补充相关背景（但不要编造新闻）
+写作要求：
+1. 【热搜板块】列出今日最热话题，加一句话说明为什么大家都在讨论
+2. 【时政要闻】选择最重要的政策/国家大事，每条写1-2句解读
+3. 【民生热点】聚焦普通人关心的消费、健康、教育、住房等话题
+4. 【国际/财经/科技】根据素材适量补充
+5. 每条新闻写1-2句点评，让读者知道"这件事跟普通人有啥关系"
+6. 语言简短干脆，适合手机上快速阅读
+7. 只写真实素材中有依据的事，不确定的不要写
 
 输出格式：纯 Markdown，不需要额外解释。"""
 
     if BRIEFING_MODE == "global":
-        prompt_structure = """1. 全球要闻（各平台头版观点，4-6条）
-2. 财经（来自不同财经媒体，3-5条）
-3. 科技（2-3条）
-4. 简要评述（200字以内，综合全球趋势）"""
+        prompt_structure = """1. 🔥 全球热搜（3-5条）
+2. 🌍 全球要闻（各平台头版观点，4-6条）
+3. 💰 财经（来自不同财经媒体，3-5条）
+4. 💻 科技（2-3条）
+5. 📝 简要评述（200字以内，综合全球趋势）"""
         briefing_type = "全球简报"
     elif BRIEFING_MODE == "china":
-        prompt_structure = """1. 中国时事（来自各中文源，2-4条）
-2. 民生与社会（2-3条）
-3. 简要评述（200字以内，关注国内趋势）"""
+        prompt_structure = """1. 🔥 今日热搜 TOP10（直接引用热搜数据，每条加一句热度解读）
+2. 📰 时政要闻（3-5条，来自权威媒体）
+3. 🏠 民生与社会（3-5条，普通人关心的）
+4. 💡 一句话评述（100字以内，今天的核心信号）"""
         briefing_type = "中国简报"
     else:
-        prompt_structure = """1. 全球要闻（各平台头版观点，4-6条）
-2. 财经（来自不同财经媒体，3-5条）
-3. 科技（2-3条）
-4. 中国（2-3条）
-5. 简要评述（200字以内，综合各平台趋势）"""
+        prompt_structure = """1. 🔥 今日热搜（5-8条）
+2. 🌍 全球要闻（各平台头版观点，4-6条）
+3. 💰 财经（来自不同财经媒体，3-5条）
+4. 💻 科技（2-3条）
+5. 🇨🇳 中国（2-3条）
+6. 📝 简要评述（200字以内，综合各平台趋势）"""
         briefing_type = "每日简报"
 
     user_prompt = f"""请根据以下来自不同平台的新闻素材，整理一份 {datetime.now(TZ).strftime('%Y年%m月%d日')} 的{briefing_type}。
 
-素材（每个平台只取头版头条，视角各不相同）：
+素材（包含百度热搜 + 多个新闻源，每条都标注了来源）：
 {raw_material}
 
-请按以下结构输出：
+请严格按以下结构输出，每条新闻附上来源：
 {prompt_structure}
 
-每条新闻请附上来源名称和链接。"""
+重点：热搜部分直接罗列今日真实热搜话题，不要编造。"""
 
     content = call_llm(user_prompt, system_prompt)
     return content
