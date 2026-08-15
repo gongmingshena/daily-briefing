@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-合并中国简报 + 编辑部晨报为一条 Server酱 推送
+合并公众号素材筛选 + 编辑部晨报为一条 Server酱 推送
 用于 GitHub Actions 合并步骤
 """
 import os
@@ -18,13 +18,13 @@ if not key:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.dirname(script_dir)
 
-# 读取中国简报
-china_path = os.path.join(script_dir, "output", "每日简报", f"中国简报_{today}.md")
-if os.path.isfile(china_path):
-    with open(china_path, "r", encoding="utf-8") as f:
-        china = f.read().strip()
+# 读取公众号素材筛选
+material_path = os.path.join(script_dir, "output", "每日简报", f"公众号素材筛选_{today}.md")
+if os.path.isfile(material_path):
+    with open(material_path, "r", encoding="utf-8") as f:
+        material = f.read().strip()
 else:
-    china = f"# 🇨🇳 中国简报 — {today}\n\n（今日未生成）"
+    material = f"# ✍️ 公众号素材筛选 — {today}\n\n（今日未生成）"
 
 # 读取编辑部晨报
 editor_path = os.path.join(script_dir, "output", "每日编辑部晨报", f"每日编辑部晨报_{today}.md")
@@ -35,14 +35,14 @@ else:
     editor = f"# 📰 每日编辑部晨报 — {today}\n\n（今日未生成）"
 
 # 合并
-merged = china + "\n\n---\n\n" + editor
+merged = material + "\n\n---\n\n" + editor
 
 # 截断（Server酱约 32KB 上限）
 if len(merged.encode("utf-8")) > 28000:
     merged = merged[:10000] + "\n\n...（内容过长已截断）"
 
 # 推送
-title = f"📰 77晨报 + 🇨🇳 简报 | {today}"
+title = f"✍️ 77素材筛选 + 📰 编辑部晨报 | {today}"
 url = f"https://sctapi.ftqq.com/{key}.send"
 
 try:

@@ -1,7 +1,7 @@
 # ============================================================
 # 每日简报 + 77 内容总编 — GitHub Actions 定时任务
 # 每天 2:00 (北京时间) 执行：
-#   1. 中国简报 (daily-briefing.py)
+#   1. 公众号素材筛选 (daily-briefing.py)
 #   2. 77 内容总编·每日编辑部晨报 (77-content-editor.py)
 # 合并为一条 Server酱 推送发送到微信
 #
@@ -43,11 +43,11 @@ jobs:
           pip install requests beautifulsoup4 lxml
 
       # ---- 生成两份简报（均不推送） ----
-      - name: Step 1 — Generate China briefing (no push)
+      - name: Step 1 — Generate WeChat material briefing (no push)
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           PYTHONIOENCODING: utf-8
-          BRIEFING_MODE: china
+          BRIEFING_MODE: wechat
           # 不设 SERVERCHAN_KEY → daily-briefing.py 不推送
         run: |
           python scripts/daily-briefing.py
@@ -73,7 +73,7 @@ jobs:
         run: |
           git config user.name "Daily Briefing Bot"
           git config user.email "bot@daily-briefing.gh"
-          git add briefings/ scripts/output/
+          git add briefings/
           git diff --cached --quiet || git commit -m "briefings $(date +'%Y-%m-%d')"
           git push
 

@@ -6,6 +6,13 @@
 用魔搭社区 (ModelScope) 免费 API 整理摘要，生成 Markdown 简报，
 通过 Server酱 推送到微信。
 
+运行模式（BRIEFING_MODE 环境变量）：
+  global → 全球简报（world + finance + tech）
+  china  → 中国简报（china + 百度热搜）
+  wechat → 公众号素材筛选（77爸爸：从当天热点筛出适合普通家庭的真实素材线索，
+           输出"今日最值得写 + 2-4条候选"，不编造故事，只提供角度和回忆问题）
+  空/其他 → 全部源（手动测试用）
+
 部署方式：
   A) 本地 Windows 定时任务 (schtasks) — 每天 9:20，需管理员权限
      scripts/ps1/setup-schtasks.ps1
@@ -15,6 +22,7 @@
     set PYTHONIOENCODING=utf-8
     set MODELSCOPE_TOKEN="ms-xxx"   # 魔搭 SDK Token（必填）
     set SERVERCHAN_KEY="SCTxxx"     # Server酱 SendKey（有默认值）
+    set BRIEFING_MODE=wechat        # 公众号素材筛选模式
     python daily-briefing.py
 
 魔搭免费 API 说明（每天 2000 次免费）：
@@ -32,6 +40,7 @@ import os
 import sys
 import re
 import json
+from urllib.parse import quote_plus
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -91,6 +100,7 @@ BRIEFING_VERSION = "v4-hotsearch"
 # ---- 运行模式 ----
 # global → 全球简报（world + finance + tech）
 # china → 中国简报（china + browser domestic news）
+# wechat → 公众号素材筛选（77爸爸：从热点筛出适合普通家庭的真实素材线索）
 # 空/其他 → 全部源（手动测试用）
 BRIEFING_MODE = os.environ.get("BRIEFING_MODE", "").lower()
 
@@ -130,6 +140,7 @@ RSS_FEEDS = {
 MODE_SECTIONS = {
     "global": ["world", "finance", "tech"],
     "china": ["china"],
+    "wechat": [],  # 公众号素材筛选：只用百度热搜（当天热点最可靠）
 }
 
 # ============================================================
@@ -231,7 +242,13 @@ def fetch_baidu_hotsearch(max_items: int = 20) -> list:
             if w not in seen:
                 seen.add(w)
                 score = int(scores[i]) if i < len(scores) and scores[i].isdigit() else 0
-                results.append({"title": w, "hotScore": score})
+                results.append({
+                    "title": w,
+                    "hotScore": score,
+                    "source": "百度热搜",
+                    "observed_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"),
+                    "link": f"https://www.baidu.com/s?wd={quote_plus(w)}",
+                })
             if len(results) >= max_items:
                 break
         log(f"🔥 百度热搜采集完成: {len(results)} 条")
@@ -345,6 +362,9 @@ def call_llm(prompt: str, system: str = "你是一个专业的财经新闻编辑
 
 def push_serverchan(title: str, content: str) -> bool:
     """通过 Server酱 推送到微信"""
+    if not SERVERCHAN_KEY:
+        log("ℹ️  未设置 SERVERCHAN_KEY，跳过推送")
+        return False
     url = f"https://sctapi.ftqq.com/{SERVERCHAN_KEY}.send"
     data = {"title": title, "desp": content}
 
@@ -405,7 +425,7 @@ def collect_news() -> dict:
         all_news[category] = unique[:15]
 
     # 采集百度热搜
-    if BRIEFING_MODE in ("china", "") or BRIEFING_MODE not in MODE_SECTIONS:
+    if BRIEFING_MODE in ("china", "wechat", "") or BRIEFING_MODE not in MODE_SECTIONS:
         hotsearch = fetch_baidu_hotsearch(20)
         if hotsearch:
             all_news["hotsearch"] = hotsearch
@@ -510,12 +530,100 @@ def generate_briefing(news_data: dict) -> Optional[str]:
     return content
 
 
+def generate_wechat_material_briefing(news_data: dict) -> Optional[str]:
+    """用 AI 从当天热点中筛选适合"77爸爸"公众号的真实素材线索。
+
+    核心原则：热点负责提供"今天为什么值得谈"，AI 负责找到
+    "普通家庭为什么会停顿三秒"，真实故事由作者自己提供。
+    """
+    log("🧠 正在用 AI 筛选公众号素材...")
+
+    # 组装素材：只用百度热搜（当天热点最可靠）
+    sections_text = []
+    hotsearch = news_data.get("hotsearch", [])
+    if hotsearch:
+        hs = "## 🔥 今日热搜 TOP20\n\n"
+        for i, item in enumerate(hotsearch[:20], 1):
+            score_display = f"(热度: {item['hotScore']:,})" if item.get("hotScore") else ""
+            hs += (
+                f"{i}. **{item['title']}** {score_display}\n"
+                f"   来源：{item.get('source', '百度热搜')}｜采集时间：{item.get('observed_at', '')}｜"
+                f"[检索链接]({item.get('link', '')})\n"
+            )
+        hs += "\n"
+        sections_text.append(hs)
+
+    if not sections_text:
+        log("⚠️  没有采集到任何素材")
+        return None
+
+    raw_material = "\n".join(sections_text)
+
+    system_prompt = """你是一个公众号"77爸爸"的素材筛选编辑。
+
+77爸爸是一个40岁上下的普通中年男人，做过15年设计，现在做家庭风险和保险规划。公众号记录普通家庭的安全感，研究普通家庭怎么面对风险。定位语：记录普通家庭的安全感，也研究普通家庭怎么面对风险。
+
+你的任务：从当天百度热搜词条中，筛选出适合77爸爸公众号的真实素材线索。不要编造故事、人物对话和作者经历，而是通过问题提醒作者回忆自己的真实生活素材。
+
+证据边界：输入只证明“该词条在采集时出现在百度热搜”，不证明词条背后的完整事实。除非输入明确提供，否则不得补写发布机构、人物动机、法律规则、医学结论、心理判断、研究结论、事件经过或因果关系。来源只能写“百度热搜”，时间只能使用输入中的采集时间，链接只能使用输入中的检索链接。信息不足时必须明确写“仅有热搜词条，事件细节待核验”。
+
+事实与判断必须分栏：只有“公开线索”属于事实；“一句话信号”“文章切口”“推荐理由”都属于编辑判断，必须以“编辑判断：”开头，并使用“可能、值得追问、可以观察”等非确定表达。不得把编辑判断写成法律、医学、心理或因果事实。
+
+筛选优先寻找：
+- 身体出现的小变化，推翻过去的认知
+- 父母老去、孩子长大带来的家庭责任变化
+- 裁员、收入变化、行业下行带来的安全感问题
+- 普通家庭明知道该准备，却一直拖着没做的事情
+- 一个具体动作、数字或生活细节，能够形成电影画面
+
+主动排除：
+- 单纯的AI产品发布和技术参数
+- 与普通家庭没有关系的行业融资新闻
+- 只有热度、没有可靠来源的信息
+- 需要虚构作者经历才能成立的选题
+- 借疾病、事故或悲剧制造焦虑的内容
+- 最后只能硬转保险产品的选题
+
+核心原则：热点负责提供"今天为什么值得谈"，你负责找到"普通家庭为什么会停顿三秒"，真实故事由作者自己提供。"""
+
+    user_prompt = f"""请根据以下当天百度热搜，筛选出适合"77爸爸"公众号的素材线索。
+
+素材（每条都标注了热度）：
+{raw_material}
+
+请严格按以下格式输出，每天推荐3-5条，并明确选出最值得写的一条。候选不得与“今日最值得写”重复：
+
+### 今日最值得写
+**公开线索：**只复述热搜词条，并附“百度热搜”、采集时间和检索链接；不得把标题扩写成已核实事实。
+**一句话信号：**以“编辑判断：”开头，用可能性或问题表达这条线索为什么值得普通家庭停顿三秒。
+**适合人群：**40岁上下、有父母和孩子的家庭。
+**可连接方向：**身体／家庭／职场／金钱／养老。
+**回忆问题：**"你最近有没有遇到类似的一刻？"
+**文章切口：**以“编辑判断：”开头，只提供角度，不替你编故事。
+**素材等级：**S级母题／B级可复用／A级时效热点。
+**推荐理由：**以“编辑判断：”开头，说明为什么它适合77爸爸，而不只是因为它热。
+
+### 另外2—4条候选
+每条只保留：
+- 公开线索（只复述词条；标注百度热搜、采集时间和检索链接）
+- 一句话信号（以“编辑判断：”开头，只写可能性或值得追问的问题）
+- 与普通家庭的关系
+- 可写角度（以“编辑判断：”开头）
+- 来源链接（必须原样输出输入中的 Markdown 检索链接）
+- 风险提示
+
+只写输入中有依据的信息，不确定的明确标注“待核验”。不要编造来源、事实、故事、人物对话和作者经历。"""
+
+    content = call_llm(user_prompt, system_prompt)
+    return content
+
+
 def save_and_push(content: str) -> str:
     """保存简报并推送（根据 BRIEFING_MODE 区分文件名和标题）"""
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][datetime.now(TZ).weekday()]
 
-    mode_tag = {"global": "🌍 全球简报", "china": "🇨🇳 中国简报"}.get(BRIEFING_MODE, "📰 每日简报")
+    mode_tag = {"global": "🌍 全球简报", "china": "🇨🇳 中国简报", "wechat": "✍️ 公众号素材筛选"}.get(BRIEFING_MODE, "📰 每日简报")
     header = f"""# {mode_tag} — {today}（{weekday_cn}）
 
 > 生成时间: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')} | 模型: {MODELSCOPE_MODEL}
@@ -526,7 +634,7 @@ def save_and_push(content: str) -> str:
 
     # 本地输出
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    mode_suffix = {"global": "全球简报", "china": "中国简报"}.get(BRIEFING_MODE, "每日简报")
+    mode_suffix = {"global": "全球简报", "china": "中国简报", "wechat": "公众号素材筛选"}.get(BRIEFING_MODE, "每日简报")
     filename = f"{mode_suffix}_{today}.md"
     filepath = os.path.join(OUTPUT_DIR, filename)
     with open(filepath, "w", encoding="utf-8") as f:
@@ -559,7 +667,7 @@ def main():
     log("=" * 50)
     log(f"📰 Daily Briefing — {datetime.now(TZ).strftime('%Y-%m-%d %H:%M')}")
     log(f"🤖 模型: {MODELSCOPE_MODEL}")
-    mode_label = {"global": "🌍 全球模式", "china": "🇨🇳 中国模式"}.get(BRIEFING_MODE, "📋 全源模式")
+    mode_label = {"global": "🌍 全球模式", "china": "🇨🇳 中国模式", "wechat": "✍️ 公众号素材筛选模式"}.get(BRIEFING_MODE, "📋 全源模式")
     log(f"📌 模式: {mode_label}")
     log(f"📤 Server酱: {'✅ 已配置' if SERVERCHAN_KEY else '⚠️  未配置'}")
     log(f"📂 输出目录: {OUTPUT_DIR}")
@@ -569,7 +677,10 @@ def main():
     news_data = collect_news()
 
     # AI 生成简报
-    content = generate_briefing(news_data)
+    if BRIEFING_MODE == "wechat":
+        content = generate_wechat_material_briefing(news_data)
+    else:
+        content = generate_briefing(news_data)
     if not content:
         log("❌ 简报生成失败，尝试无素材直接生成...")
         # 即使没 RSS 素材，也让 AI 基于知识生成
@@ -584,6 +695,20 @@ def main():
             fb_structure = """1. 中国时事（2-4条）
 2. 民生与社会（2-3条）
 3. 简要评述"""
+        elif BRIEFING_MODE == "wechat":
+            fb_type = "公众号素材筛选"
+            fb_structure = """### 今日最值得写
+**公开事件：**（据公开报道）
+**一句话信号：**
+**适合人群：**40岁上下、有父母和孩子的家庭。
+**可连接方向：**身体／家庭／职场／金钱／养老。
+**回忆问题：**"你最近有没有遇到类似的一刻？"
+**文章切口：**只提供角度，不替你编故事。
+**素材等级：**S级母题／B级可复用／A级时效热点。
+**推荐理由：**
+
+### 另外2—4条候选
+每条只保留：公开事实、一句话信号、与普通家庭的关系、可写角度、来源链接、风险提示"""
         else:
             fb_type = "每日简报"
             fb_structure = """1. 全球财经头条（3-5条）
